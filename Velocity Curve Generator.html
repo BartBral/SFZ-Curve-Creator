@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SFZ Velocity Curve Generator - Fixed B-Spline and Output</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #99a2ea;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: left;
+  }
+  h1 {
+    margin-top: 1em;
+    font-size: 1.8em;
+    text-align: left;
+  }
+  p {
+    max-width: 600px;
+    margin: 0.5em auto 1em auto;
+    line-height: 1.4;
+    text-align: left;
+  }
+  .main-container {
+    display: flex;
+    margin-bottom: 2em;
+  }
+  .left-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .graph-container {
+    position: relative;
+    width: 480px;
+    height: 480px;
+    border: 1px solid #2d713e;
+    background: white;
+    margin-bottom: 6px;
+  }
+  #curve {
+    width: 480px;
+    height: 480px;
+  }
+  #curve canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  #x-axis-labels {
+    margin-top: 6px;
+    width: 480px;
+    display: flex;
+    justify-content: space-between;
+    font-weight: bold;
+    font-size: 12px;
+    color: black;
+    user-select: none;
+  }
+  #sfz-graph-container {
+    width: 480px;
+    height: 480px;
+    border: 1px solid #777;
+    background: #fafafa;
+    margin-top: 18px;
+  }
+  #sfz-graph {
+    width: 480px;
+    height: 480px;
+    margin-top: 6px;
+  }
+  #y-axis-labels {
+    position: absolute;
+    left: -30px;
+    top: 0;
+    height: 480px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    font-weight: bold;
+    font-size: 12px;
+    color: black;
+    pointer-events: none;
+    text-align: right;
+  }
+  .mode-controls {
+    margin-top: 8px;
+    width: 480px;
+    user-select: none;
+  }
+  .mode-controls label {
+    margin-right: 12px;
+    cursor: pointer;
+  }
+  .mode-controls input[type="radio"] {
+    margin-right: 4px;
+  }
+  #output-container {
+    margin-left: 24px;
+    width: 320px;
+    display: flex;
+    flex-direction: column;
+  }
+  #output {
+    flex-grow: 1;
+    height: 480px;
+    padding: 8px;
+    background: #f0f0f5;
+    font-family: monospace;
+    white-space: pre-wrap;
+    overflow-y: auto;
+    border: 1px solid #777;
+    border-radius: 4px;
+    user-select: text;
+  }
+  button.copy-btn {
+    margin-top: 12px;
+    padding: 8px 20px;
+    background: #3b6ce1;
+    border: none;
+    color: #fff;
+    font-weight: bold;
+    border-radius: 4px;
+    cursor: pointer;
+    user-select: none;
+  }
+  button.copy-btn:hover {
+    background: #2b55b8;
+  }
+  #copy-message {
+    font-weight: bold;
+    color: rgb(0, 255, 0);
+    margin-left: 12px;
+    align-self: center;
+    user-select: none;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+  }
+  #copy-message.visible {
+    opacity: 1;
+  }
+</style>
+</head>
+<body>
+<h1>SFZ Velocity Curve Generator</h1>
+<p>Drag points to change the curve.<br />Double-click a point (except first/last) to delete.<br />Switch modes and press "Copy code" to copy SFZ output.</p>
+
+<div class="main-container">
+  <div class="left-panel">
+    <div class="graph-container" aria-label="Curve graph">
+      <canvas id="curve" width="480" height="480" tabindex="1"></canvas>
+      <div id="y-axis-labels" aria-hidden="true"><span>127</span><span>OUT</span><span>0</span></div>
+      <div id="x-axis-labels" aria-hidden="true">
+        <span>0</span>
+        <span>IN</span>
+        <span>127</span>
+      </div>
+    </div>
+
+    <div class="mode-controls" aria-label="Curve mode selection">
+      <label><input type="radio" name="mode" value="linear" />Linear</label>
+      <label><input type="radio" name="mode" value="smooth" />Smooth</label>
+      <label><input type="radio" name="mode" value="monotonic" />Monotonic</label>
+      <label><input type="radio" name="mode" value="natural" />Natural</label>
+      <label><input type="radio" name="mode" value="bspline" checked />B-Spline</label>
+    </div>
+
+    <div id="sfz-graph-container" aria-label="SFZ output graph">
+      <canvas id="sfz-graph" width="480" height="480"></canvas>
+    </div>
+  </div>
+
+  <div id="output-container" aria-label="SFZ output code">
+    <pre id="output">// SFZ velocity curve output will appear here</pre>
+    <div style="display: flex; align-items: center;">
+      <button class="copy-btn" id="copyBtn">Copy code</button>
+      <span id="copy-message" aria-live="polite" aria-atomic="true" class="">Copied!</span>
+    </div>
+  </div>
+</div>
+
+<script>
+function createMonotoneCubicSpline(xs, ys) {
+  if(xs.length < 2) return x => ys[0];
+  const n = xs.length;
+  const dx = [], dy = [], ms = [];
+  for(let i=0; i<n-1; i++) {
+    dx[i] = xs[i+1]-xs[i]; dy[i] = ys[i+1]-ys[i]; ms[i] = dy[i]/dx[i];
+  }
+  const c1 = [ms[0]];
+  for(let i=1; i<n-1; i++){
+    if(ms[i-1]*ms[i] <= 0) c1[i] = 0;
+    else {
+      const w1 = 2*dx[i] + dx[i-1], w2 = dx[i] + 2*dx[i-1];
+      c1[i] = (w1+w2)/(w1/ms[i-1] + w2/ms[i]);
+    }
+  }
+  c1[n-1] = ms[n-2];
+  const c2 = [], c3 = [];
+  for(let i=0; i<n-1; i++){
+    const invDx = 1/dx[i];
+    const common = c1[i] + c1[i+1] - 2*ms[i];
+    c2[i] = (ms[i] - c1[i] - common)*invDx;
+    c3[i] = common*invDx*invDx;
+  }
+  return x => {
+    let i = n-2;
+    if(x <= xs[0]) i=0;
+    else if(x >= xs[n-1]) i=n-2;
+    else {
+      let low=0, high=n-2;
+      while(low <= high){
+        const mid = Math.floor((low+high)/2);
+        if(xs[mid] <= x && x <= xs[mid+1]){
+          i = mid;
+          break;
+        } else if(x < xs[mid]){
+          high = mid-1;
+        } else low = mid+1;
+      }
+    }
+    const diff = x - xs[i];
+    return ys[i] + c1[i]*diff + c2[i]*diff*diff + c3[i]*diff*diff*diff;
+  };
+}
+
+function createNaturalCubicSpline(xs, ys) {
+  const n = xs.length;
+  const a = ys.slice();
+  const h = [];
+  for(let i=0; i<n-1; i++) h[i] = xs[i+1] - xs[i];
+  const al = [0];
+  for(let i=1; i<n-1; i++)
+     al[i] = (3/h[i])*(a[i+1] - a[i]) - (3/h[i-1])*(a[i] - a[i-1]);
+  const l = [1], mu = [0], z = [0];
+  for(let i=1; i<n-1; i++){
+    l[i] = 2*(xs[i+1]-xs[i-1]) - h[i-1]*mu[i-1];
+    mu[i] = h[i]/l[i];
+    z[i] = (al[i] - h[i-1]*z[i-1])/l[i];
+  }
+  l[n-1] = 1; z[n-1] = 0;
+  const c = Array(n).fill(0);
+  const b = Array(n-1).fill(0);
+  const d = Array(n-1).fill(0);
+  for(let j=n-2; j>=0; j--){
+    c[j] = z[j] - mu[j]*c[j+1];
+    b[j] = (a[j+1]-a[j])/h[j] - h[j]*(c[j+1] + 2*c[j])/3;
+    d[j] = (c[j+1] - c[j])/(3*h[j]);
+  }
+  return x => {
+    if(x <= xs[0]) return a[0];
+    if(x >= xs[n-1]) return a[n-1];
+    let i=0;
+    while(i < n-2 && x > xs[i+1]) i++;
+    const diff = x - xs[i];
+    return a[i] + b[i]*diff + c[i]*diff*diff + d[i]*diff*diff*diff;
+  };
+}
+
+
+// Evaluate point on a uniform clamped B-spline curve using the De Boor algorithm
+// Arguments:
+//   points — array of control points [{x, y}, ...]
+//   degree — spline degree (e.g., 3 for cubic)
+//   t      — parameter in [0, 1], normalized curve position
+function bsplineControlPoints(points, degree, t) {
+
+  const n = points.length - 1;    // last control-point index
+  const k = degree;               // B-spline degree
+  const m = n + k + 1;            // last knot index
+
+  // --- Construct a uniform, clamped knot vector ---
+  const knots = [];
+  for (let i = 0; i <= m; i++) {
+    if (i <= k) knots.push(0);                // start clamped
+    else if (i >= m - k) knots.push(1);       // end clamped
+    else knots.push((i - k) / (m - 2 * k));   // uniform interior spacing
+  }
+
+  // --- Keep parameter t within the valid domain ---
+  // Guarantees i-k+j stays within bounds without manual clamping.
+  if (t < 0) t = 0;
+  if (t > 1) t = 1 - 1e-12; // slight offset avoids hitting final zero-width interval
+
+  // --- Locate knot span "i" such that knots[i] ≤ t < knots[i+1] ---
+  let i = k; // starting guess (safe lower bound)
+  for (; i < m - k; i++) {
+    if (t >= knots[i] && t < knots[i + 1]) break;
+  }
+  // If t == 1 exactly, assign final span
+  if (t >= knots[m - k]) i = n;
+
+  // --- Initialize de Boor points ---
+  const d = [];
+  for (let j = 0; j <= k; j++) {
+    // Now safe: i-k+j always in [0, n]
+    const idx = i - k + j;
+    d[j] = { x: points[idx].x, y: points[idx].y };
+  }
+
+  // --- Perform De Boor recursion (iterative form) ---
+  for (let r = 1; r <= k; r++) {
+    for (let j = k; j >= r; j--) {
+      const left  = knots[i - k + j];
+      const right = knots[i + 1 + j - r];
+      const denom = right - left;
+
+      // Avoid division by zero (shouldn’t happen with proper knots)
+      const alpha = denom > 1e-12 ? (t - left) / denom : 0;
+
+      d[j] = {
+        x: (1 - alpha) * d[j - 1].x + alpha * d[j].x,
+        y: (1 - alpha) * d[j - 1].y + alpha * d[j].y,
+      };
+    }
+  }
+
+  // Final evaluated B-spline point
+  return d[k];
+}
+
+
+class CanvasSpliner{
+  constructor(){
+    this.canvas = document.getElementById('curve');
+    this.ctx = this.canvas.getContext('2d');
+    this.w = this.canvas.width;
+    this.h = this.canvas.height;
+    this.points = [ // initial 4 points
+      {x:0, y:this.h},
+      {x: this.w/3, y: this.h*2/3},
+      {x: this.w*2/3, y: this.h/3},
+      {x: this.w, y: 0}
+    ];
+    this.dragIndex = -1;
+    this.mode = 'bspline';
+    this.init();
+    this.draw();
+  }
+  init(){
+    this.canvas.addEventListener('mousedown', e=>{
+      const p = this.mousePos(e);
+      const idx = this.points.findIndex(pt => Math.hypot(pt.x-p.x, pt.y-p.y) < 8);
+      if(idx >= 0) this.dragIndex = idx;
+      else {
+        this.points.push(p);
+        this.points.sort((a,b)=> a.x - b.x);
+      }
+      this.draw();
+    });
+    this.canvas.addEventListener('mousemove', e=>{
+      if(this.dragIndex >= 0){
+        const p = this.mousePos(e);
+        this.points[this.dragIndex].x = Math.min(Math.max(p.x,0), this.w);
+        this.points[this.dragIndex].y = Math.min(Math.max(p.y,0), this.h);
+        this.points.sort((a,b) => a.x - b.x);
+        this.draw();
+      }
+    });
+    window.addEventListener('mouseup', () => this.dragIndex = -1);
+    this.canvas.addEventListener('dblclick', e=>{
+      const p = this.mousePos(e);
+      const idx = this.points.findIndex(pt => Math.hypot(pt.x-p.x, pt.y-p.y) < 8);
+      if(idx > 0 && idx < this.points.length-1){
+        this.points.splice(idx,1);
+        this.draw();
+      }
+    });
+    document.querySelectorAll('input[name="mode"]').forEach(r => {
+      r.addEventListener('change', e=>{
+        this.setMode(e.target.value);
+      });
+    });
+  }
+  mousePos(e){
+    const rect = this.canvas.getBoundingClientRect();
+    return {x: e.clientX-rect.left, y: e.clientY-rect.top};
+  }
+  draw(){
+    this.ctx.clearRect(0,0,this.w,this.h);
+    this.ctx.lineWidth = 2;
+    this.ctx.strokeStyle = '#333';
+    this.ctx.fillStyle = 'red';
+
+    switch(this.mode){
+      case 'linear': this.drawLinear(); break;
+      case 'smooth': this.drawSmooth(); break;
+      case 'monotonic': this.drawMonotonic(); break;
+      case 'natural': this.drawNatural(); break;
+      case 'bspline': this.drawBSpline(); break;
+      default: this.drawLinear(); break;
+    }
+
+    for(const p of this.points){
+      this.ctx.beginPath();
+      this.ctx.arc(p.x,p.y,6,0,2*Math.PI);
+      this.ctx.fill();
+      this.ctx.stroke();
+    }
+
+    this.drawAxisLabels();
+    this.updateOutput();
+    this.drawSFZGraph();
+  }
+  drawLinear(){
+    this.ctx.beginPath();
+    this.ctx.moveTo(this.points[0].x,this.points[0].y);
+    for(let i=1; i<this.points.length; i++){
+      this.ctx.lineTo(this.points[i].x,this.points[i].y);
+    }
+    this.ctx.stroke();
+  }
+  drawSmooth(){
+    const pts = this.points;
+    const ctx = this.ctx;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x,pts[0].y);
+    for(let i=0; i<pts.length-1; i++){
+      const p0 = (i===0)? pts[i] : pts[i-1];
+      const p1 = pts[i];
+      const p2 = pts[i+1];
+      const p3 = (i+2 < pts.length) ? pts[i+2] : pts[i+1];
+      for(let t=0; t<=1; t += 0.05) {
+        ctx.lineTo(this.catmullRom(t,p0.x,p1.x,p2.x,p3.x), this.catmullRom(t,p0.y,p1.y,p2.y,p3.y));
+      }
+    }
+    ctx.stroke();
+  }
+  drawMonotonic(){
+    const xs = this.points.map(p=>p.x);
+    const ys = this.points.map(p=>127-(p.y/this.h)*127);
+    if(xs.length < 2) return;
+    const interp = createMonotoneCubicSpline(xs,ys);
+    this.ctx.beginPath();
+    for(let px=0; px<=this.w; px++){
+      let yv = interp(px);
+      yv = Math.min(127, Math.max(0, yv));
+      const cy = ((127-yv)*this.h)/127;
+      if(px===0) this.ctx.moveTo(px,cy);
+      else this.ctx.lineTo(px,cy);
+    }
+    this.ctx.stroke();
+  }
+  drawNatural(){
+    const xs = this.points.map(p=>p.x);
+    const ys = this.points.map(p=>127-(p.y/this.h)*127);
+    if(xs.length < 2) return;
+    const interp = createNaturalCubicSpline(xs, ys);
+    this.ctx.beginPath();
+    for(let px=0; px<=this.w; px++){
+      let yv = interp(px);
+      yv = Math.min(127, Math.max(0, yv));
+      const cy = ((127-yv)*this.h)/127;
+      if(px===0) this.ctx.moveTo(px,cy);
+      else this.ctx.lineTo(px,cy);
+    }
+    this.ctx.stroke();
+  }
+  drawBSpline(){
+    if(this.points.length < 4) return;
+    const ctx = this.ctx;
+    ctx.beginPath();
+    const step = 1/this.w;
+    for(let t=0; t<=1; t+= step){
+      const p = bsplineControlPoints(this.points, 3, t);
+      if(t === 0) ctx.moveTo(p.x,p.y);
+      else ctx.lineTo(p.x,p.y);
+    }
+    this.ctx.stroke();
+  }
+  catmullRom(t,p0,p1,p2,p3){
+    return 0.5*((2*p1) + (-p0+p2)*t + (2*p0-5*p1+4*p2 - p3)*t*t + (-p0+3*p1-3*p2+p3)*t*t*t);
+  }
+  drawAxisLabels(){
+    this.ctx.font = "12px Arial";
+    this.ctx.fillStyle = "black";
+    this.ctx.textAlign = "right";
+    this.ctx.textBaseline = "middle";
+    this.ctx.fillText("127", -8, 8);
+    this.ctx.fillText("OUT", -12, this.h / 2);
+    this.ctx.fillText("0", -8, this.h - 8);
+    this.ctx.textAlign = "center";
+    this.ctx.textBaseline = "top";
+    this.ctx.fillText("0", 0, this.h + 6);
+    this.ctx.fillText("IN", this.w / 2, this.h + 16);
+    this.ctx.fillText("127", this.w, this.h + 6);
+  }
+  updateOutput(){
+    const n = 128;
+    const xs = this.points.map(p=>p.x);
+    const ys = this.points.map(p=>127 - (p.y/this.h)*127);
+    let sorted = xs.map((x,i) => ({x, y: ys[i]})).sort((a,b) => a.x - b.x);
+    const X = sorted.map(p=>p.x);
+    const Y = sorted.map(p=>p.y);
+
+    let interp;
+    switch(this.mode){
+      case 'linear':
+        interp = x => {
+          let i=0;
+          while(i < X.length-1 && x > X[i+1]) i++;
+          if(i >= X.length-1) return Y[Y.length-1];
+          const span = X[i+1]-X[i];
+          const frac = span ? (x - X[i])/span : 0;
+          return Y[i] + frac*(Y[i+1]-Y[i]);
+        };
+        break;
+      case 'monotonic':
+        interp = createMonotoneCubicSpline(X,Y);
+        break;
+      case 'natural':
+        interp = createNaturalCubicSpline(X,Y);
+        break;
+      case 'bspline':
+        interp = x => {
+          if(X.length < 4) return Y[0];
+          const tNorm = (x - X[0])/(X[X.length-1] - X[0]);
+          const p = bsplineControlPoints(sorted, 3, Math.min(1, Math.max(0, tNorm)));
+          return ((127 - p.y)*127)/this.h;
+        };
+        break;
+      default: // smooth
+        interp = x => {
+          if(X.length < 2) return Y[0];
+          let seg = 0;
+          while(seg < X.length-2 && x > X[seg+1]) seg++;
+          const p0x = seg === 0 ? X[seg] : X[seg-1];
+          const p1x = X[seg];
+          const p2x = X[seg+1];
+          const p3x = seg+2 < X.length ? X[seg+2] : X[seg+1];
+          const p0y = seg === 0 ? Y[seg] : Y[seg-1];
+          const p1y = Y[seg];
+          const p2y = Y[seg+1];
+          const p3y = seg+2 < Y.length ? Y[seg+2] : Y[seg+1];
+
+          const t = (x-p1x)/(p2x-p1x);
+          return 0.5*(2*p1y + (-p0y+p2y)*t + (2*p0y-5*p1y+4*p2y-p3y)*t*t + (-p0y+3*p1y-3*p2y+p3y)*t*t*t);
+        };
+    }
+    const output = ['<curve>', 'curve_index=18'];
+    let lineParts = [];
+    for(let i=0; i < n; i++){
+      const sampleX = X[0] + ((X[X.length-1]-X[0]) * i) / (n-1);
+      let val = interp(sampleX);
+      val = Math.min(127, Math.max(0, val));
+      val = (val/127).toFixed(5);
+      lineParts.push(`v${String(i).padStart(3,'0')}=${val}`);
+      if(lineParts.length === 4){
+        output.push(lineParts.join(' '));
+        lineParts = [];
+      }
+    }
+    if(lineParts.length > 0) output.push(lineParts.join(' '));
+    document.getElementById('output').textContent = output.join('\n');
+  }
+  setMode(mode){
+    this.mode = mode;
+    this.draw();
+  }
+  drawSFZGraph(){
+    const canvas = document.getElementById('sfz-graph');
+    if(!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    ctx.clearRect(0,0,width,height);
+
+    // Grid lines vertical
+    ctx.strokeStyle = '#ccc';
+    ctx.lineWidth = 1;
+    for(let i=0; i<=128; i+=32){
+      const x = (i/127)*width;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+    }
+
+    // Grid lines horizontal
+    ctx.beginPath();
+    ctx.moveTo(0, height);
+    ctx.lineTo(width, height);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(0, height/2);
+    ctx.lineTo(width, height/2);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(width, 0);
+    ctx.stroke();
+
+    const lines = document.getElementById('output').textContent.split('\n');
+    const values = [];
+    for(const line of lines){
+      if(line.startsWith('<curve>') || line.startsWith('curve_index')) continue;
+      const parts = line.trim().split(' ');
+      for(const p of parts){
+        const eqIdx = p.indexOf('=');
+        if(eqIdx > 0){
+          const val = parseFloat(p.substring(eqIdx+1));
+          if(!isNaN(val)) values.push(val);
+        }
+      }
+    }
+    if(values.length === 0) return;
+
+    ctx.strokeStyle = '#336699';
+    ctx.fillStyle = '#003366';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    values.forEach((v,i) => {
+      const x = (i/(values.length-1))*width;
+      const y = height - v*height;
+      if(i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+
+    values.forEach((v,i) => {
+      const x = (i/(values.length-1))*width;
+      const y = height - v*height;
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, 2*Math.PI);
+      ctx.fill();
+    });
+  }
+}
+
+const spline = new CanvasSpliner();
+
+const copyBtn = document.getElementById("copyBtn");
+const copyMsg = document.getElementById("copy-message");
+copyMsg.style.opacity = 0;
+
+copyBtn.addEventListener("click", () => {
+  navigator.clipboard.writeText(document.getElementById("output").textContent);
+  copyMsg.classList.add("visible");
+  setTimeout(() => copyMsg.classList.remove("visible"), 2000);
+});
+</script>
+</body>
+</html>
